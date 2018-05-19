@@ -30,6 +30,7 @@ interface QueryResult {
 })
 export class MapComponent implements OnInit, OnDestroy {
   loading: boolean;
+  timeId: string;
   subscription: Subscription;
   geolocation: Geolocation;
   coordinates = new BehaviorSubject<{ latitude: number; longitude: number }>(
@@ -82,9 +83,9 @@ export class MapComponent implements OnInit, OnDestroy {
           if (err) {
             console.error(err);
           }
-          this.map.addImage('gogo', image);
+          this.map.addImage('yellow', image);
           this.map.addLayer({
-            id: 'gogo-markers',
+            id: 'yellow-markers',
             type: 'symbol',
             source: {
               type: 'geojson',
@@ -94,7 +95,7 @@ export class MapComponent implements OnInit, OnDestroy {
               }
             },
             layout: {
-              'icon-image': 'gogo',
+              'icon-image': 'yellow',
               'text-field': '{title}',
               'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
               'text-offset': [0, 0.55],
@@ -118,9 +119,9 @@ export class MapComponent implements OnInit, OnDestroy {
           if (err) {
             console.error(err);
           }
-          this.map.addImage('nogo', image);
+          this.map.addImage('white', image);
           this.map.addLayer({
-            id: 'nogo-markers',
+            id: 'white-markers',
             type: 'symbol',
             source: {
               type: 'geojson',
@@ -130,7 +131,7 @@ export class MapComponent implements OnInit, OnDestroy {
               }
             },
             layout: {
-              'icon-image': 'nogo',
+              'icon-image': 'white',
               'text-field': '{title}',
               'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
               'text-offset': [0, 0.55],
@@ -162,6 +163,41 @@ export class MapComponent implements OnInit, OnDestroy {
         filter(value => !!value),
         tap(coordinates => {
           const { latitude, longitude } = coordinates;
+
+          const features = [
+            {
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: [longitude, latitude]
+              }
+            }
+          ] as any;
+
+          const layer = this.map.getLayer(this.timeId);
+
+          if (layer) {
+            this.map.removeLayer(this.timeId);
+          }
+
+          const time = new Date();
+          this.timeId = time.toString();
+
+          this.map.addLayer({
+            id: this.timeId,
+            type: 'symbol',
+            source: {
+              type: 'geojson',
+              data: {
+                type: 'FeatureCollection',
+                features
+              }
+            },
+            layout: {
+              'icon-image': 'red'
+            }
+          });
+
           this.map.flyTo({ center: [longitude, latitude], zoom: 14 });
         })
       )
@@ -179,6 +215,16 @@ export class MapComponent implements OnInit, OnDestroy {
     this.map.on('load', () => {
       this.getAvailableMarkers();
       this.getUnavailableMarkers();
+      this.setRedMarker();
+    });
+  };
+
+  private setRedMarker = () => {
+    this.map.loadImage('assets/icons/red.png', (err, image) => {
+      if (err) {
+        console.error(err);
+      }
+      this.map.addImage('red', image);
     });
   };
 
