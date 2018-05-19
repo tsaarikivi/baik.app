@@ -48,7 +48,6 @@ export class MapComponent implements OnInit, OnDestroy {
     this.geolocation = navigator.geolocation;
     this.buildMap();
     this.getCurrentPosition();
-    this.subscribePosition();
   }
 
   getCurrentPosition() {
@@ -216,6 +215,7 @@ export class MapComponent implements OnInit, OnDestroy {
       this.getAvailableMarkers();
       this.getUnavailableMarkers();
       this.setRedMarker();
+      this.subscribePosition();
     });
   };
 
