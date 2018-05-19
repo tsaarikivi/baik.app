@@ -1,9 +1,19 @@
 import { HttpClient } from '@angular/common/http';
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import * as mapboxgl from 'mapbox-gl';
-import { BehaviorSubject, Subscription } from 'rxjs';
-import { filter, first, map, tap } from 'rxjs/operators';
+import { BehaviorSubject, Observable, Subscription } from 'rxjs';
+import {
+  debounceTime,
+  distinctUntilChanged,
+  filter,
+  map,
+  shareReplay,
+  switchMap,
+  tap
+} from 'rxjs/operators';
 import { environment } from '../../environments/environment';
+
+const zoom = 14.8;
 
 interface Station {
   id: string;
@@ -30,13 +40,17 @@ interface QueryResult {
 })
 export class MapComponent implements OnInit, OnDestroy {
   loading: boolean;
-  timeId: string;
+  currentLocationId: string;
+  availableLocationsId: string;
+  unavailableLocationsId: string;
   subscription: Subscription;
   geolocation: Geolocation;
   coordinates = new BehaviorSubject<{ latitude: number; longitude: number }>(
     null
   );
+  windowLoaded = new BehaviorSubject<number>(null);
   map: mapboxgl.Map;
+  markersCache: Observable<Station[]>;
 
   constructor(private http: HttpClient) {
     Object.getOwnPropertyDescriptor(mapboxgl, 'accessToken').set(
@@ -47,10 +61,19 @@ export class MapComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.geolocation = navigator.geolocation;
     this.buildMap();
-    this.getCurrentPosition();
+    this.getCurrentLocation();
+    this.onLoad();
   }
 
-  getCurrentPosition() {
+  private onLoad() {
+    window.onload = window.onfocus = () => {
+      const time = new Date().getTime();
+      this.getCurrentLocation();
+      this.windowLoaded.next(time);
+    };
+  }
+
+  getCurrentLocation() {
     this.loading = true;
     if (this.geolocation) {
       this.geolocation.getCurrentPosition(position => {
@@ -61,12 +84,24 @@ export class MapComponent implements OnInit, OnDestroy {
     }
   }
 
+  private requestMarkers = () => {
+    return this.windowLoaded.pipe(
+      distinctUntilChanged(),
+      debounceTime(1000),
+      switchMap(() => {
+        return this.http.get<QueryResult>(
+          'https://api.digitransit.fi/routing/v1/routers/hsl/bike_rental'
+        );
+      }),
+      map(data => data.stations)
+    );
+  };
+
   private getMarkers = () => {
-    return this.http
-      .get<QueryResult>(
-        'https://api.digitransit.fi/routing/v1/routers/hsl/bike_rental'
-      )
-      .pipe(first(), map(data => data.stations));
+    if (!this.markersCache) {
+      this.markersCache = this.requestMarkers().pipe(shareReplay());
+    }
+    return this.markersCache;
   };
 
   private getAvailableMarkers = () => {
@@ -78,31 +113,40 @@ export class MapComponent implements OnInit, OnDestroy {
         map(this.mapToFeatures)
       )
       .subscribe((features: any) => {
-        this.map.loadImage('assets/icons/yellow.png', (err, image) => {
-          if (err) {
-            console.error(err);
-          }
-          this.map.addImage('yellow', image);
-          this.map.addLayer({
-            id: 'yellow-markers',
-            type: 'symbol',
-            source: {
-              type: 'geojson',
-              data: {
-                type: 'FeatureCollection',
-                features
-              }
-            },
-            layout: {
-              'icon-image': 'yellow',
-              'text-field': '{title}',
-              'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-              'text-offset': [0, 0.55],
-              'text-anchor': 'bottom'
-            }
-          });
-        });
+        this.setAvailableMarkers(features);
       });
+  };
+
+  private setAvailableMarkers = (features: any) => {
+    const previousId = this.availableLocationsId;
+
+    const time = new Date();
+    this.availableLocationsId = time.toString() + 'available';
+
+    this.map.addLayer({
+      id: this.availableLocationsId,
+      type: 'symbol',
+      source: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features
+        }
+      },
+      layout: {
+        'icon-image': 'yellow',
+        'text-field': '{title}',
+        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        'text-offset': [0, 0.55],
+        'text-anchor': 'bottom'
+      }
+    });
+
+    const layer = this.map.getLayer(previousId);
+
+    if (layer) {
+      this.map.removeLayer(previousId);
+    }
   };
 
   private getUnavailableMarkers = () => {
@@ -114,31 +158,40 @@ export class MapComponent implements OnInit, OnDestroy {
         map(this.mapToFeatures)
       )
       .subscribe((features: any) => {
-        this.map.loadImage('assets/icons/white.png', (err, image) => {
-          if (err) {
-            console.error(err);
-          }
-          this.map.addImage('white', image);
-          this.map.addLayer({
-            id: 'white-markers',
-            type: 'symbol',
-            source: {
-              type: 'geojson',
-              data: {
-                type: 'FeatureCollection',
-                features
-              }
-            },
-            layout: {
-              'icon-image': 'white',
-              'text-field': '{title}',
-              'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
-              'text-offset': [0, 0.55],
-              'text-anchor': 'bottom'
-            }
-          });
-        });
+        this.setUnavailableMarkers(features);
       });
+  };
+
+  private setUnavailableMarkers = (features: any) => {
+    const previousId = this.unavailableLocationsId;
+
+    const time = new Date();
+    this.unavailableLocationsId = time.toString() + 'unavailable';
+
+    this.map.addLayer({
+      id: this.unavailableLocationsId,
+      type: 'symbol',
+      source: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features
+        }
+      },
+      layout: {
+        'icon-image': 'white',
+        'text-field': '{title}',
+        'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+        'text-offset': [0, 0.55],
+        'text-anchor': 'bottom'
+      }
+    });
+
+    const layer = this.map.getLayer(previousId);
+
+    if (layer) {
+      this.map.removeLayer(previousId);
+    }
   };
 
   private mapToFeatures = (stations: Station[]) => {
@@ -156,9 +209,11 @@ export class MapComponent implements OnInit, OnDestroy {
     });
   };
 
-  private subscribePosition() {
+  private subscribeCurrentLocation() {
     this.subscription = this.coordinates
       .pipe(
+        distinctUntilChanged(),
+        debounceTime(1000),
         filter(value => !!value),
         tap(coordinates => {
           const { latitude, longitude } = coordinates;
@@ -173,49 +228,57 @@ export class MapComponent implements OnInit, OnDestroy {
             }
           ] as any;
 
-          const layer = this.map.getLayer(this.timeId);
+          this.setCurrentLocation(features);
 
-          if (layer) {
-            this.map.removeLayer(this.timeId);
-          }
-
-          const time = new Date();
-          this.timeId = time.toString();
-
-          this.map.addLayer({
-            id: this.timeId,
-            type: 'symbol',
-            source: {
-              type: 'geojson',
-              data: {
-                type: 'FeatureCollection',
-                features
-              }
-            },
-            layout: {
-              'icon-image': 'red'
-            }
-          });
-
-          this.map.flyTo({ center: [longitude, latitude], zoom: 14 });
+          this.map.flyTo({ center: [longitude, latitude], zoom });
         })
       )
       .subscribe();
   }
 
+  private setCurrentLocation = (features: any) => {
+    const previousId = this.currentLocationId;
+
+    const time = new Date();
+    this.currentLocationId = time.toString() + 'current';
+
+    this.map.addLayer({
+      id: this.currentLocationId,
+      type: 'symbol',
+      source: {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features
+        }
+      },
+      layout: {
+        'icon-image': 'red'
+      }
+    });
+
+    const layer = this.map.getLayer(previousId);
+
+    if (layer) {
+      this.map.removeLayer(previousId);
+    }
+  };
+
   private buildMap = () => {
     this.map = new mapboxgl.Map({
       container: 'map',
       style: 'mapbox://styles/mapbox/outdoors-v10',
-      zoom: 14,
+      zoom,
       center: [24.9414377, 60.1718441]
     });
 
     this.map.on('load', () => {
+      this.setRedMarker();
+      this.setWhiteMarker();
+      this.setYellowMarker();
       this.getAvailableMarkers();
       this.getUnavailableMarkers();
-      this.setRedMarker();
-      this.subscribePosition();
+      this.subscribeCurrentLocation();
     });
   };
 
@@ -225,6 +288,24 @@ export class MapComponent implements OnInit, OnDestroy {
         console.error(err);
       }
       this.map.addImage('red', image);
+    });
+  };
+
+  private setWhiteMarker = () => {
+    this.map.loadImage('assets/icons/white.png', (err, image) => {
+      if (err) {
+        console.error(err);
+      }
+      this.map.addImage('white', image);
+    });
+  };
+
+  private setYellowMarker = () => {
+    this.map.loadImage('assets/icons/yellow.png', (err, image) => {
+      if (err) {
+        console.error(err);
+      }
+      this.map.addImage('yellow', image);
     });
   };
 
