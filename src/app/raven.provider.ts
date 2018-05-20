@@ -8,9 +8,10 @@ Raven.config(
 
 export class RavenErrorHandler implements ErrorHandler {
   handleError(err: any): void {
-    console.error('ERR', err);
     if (environment.production) {
       Raven.captureException(err);
+    } else {
+      console.error('ERR', err);
     }
   }
 }
